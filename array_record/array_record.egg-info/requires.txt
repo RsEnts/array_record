@@ -1,0 +1,7 @@
+absl-py
+etils[epath]
+
+[beam]
+apache-beam[gcp]==2.53.0
+google-cloud-storage>=2.11.0
+tensorflow>=2.14.0
