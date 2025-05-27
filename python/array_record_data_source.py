@@ -261,7 +261,7 @@ class ArrayRecordDataSource:
     self._read_instructions = _get_read_instructions(paths)
     self._paths = [ri.filename for ri in self._read_instructions]
     # We open readers lazily when we need to read from them.
-    self._readers = [None] * len(self._read_instructions)
+    # self._readers = [None] * len(self._read_instructions)
     self._num_records = sum(
         map(lambda x: x.num_records, self._read_instructions)
     )
@@ -276,10 +276,6 @@ class ArrayRecordDataSource:
 
   def __exit__(self, exc_type, exc_value, traceback):
     logging.debug("__exit__ for ArrayRecordDataSource is called.")
-    for reader in self._readers:
-      if reader:
-        reader.close()
-    self._readers = [None] * len(self._read_instructions)
 
   def __len__(self) -> int:
     return self._num_records
@@ -318,22 +314,22 @@ class ArrayRecordDataSource:
       else:
         positions_and_indices[reader_idx] = [(position, idx)]
     return positions_and_indices
-
-  def _ensure_reader_exists(self, reader_idx: int) -> None:
-    """Threadsafe method to create corresponding reader if it doesn't exist."""
-    if self._readers[reader_idx] is not None:
-      return
+  
+  def _get_new_reader(self, reader_idx: int):
     filename = self._read_instructions[reader_idx].filename
     reader = _create_reader(filename)
     _check_group_size(filename, reader)
-    self._readers[reader_idx] = reader
+    return reader
 
   def __getitem__(self, record_key: SupportsIndex) -> bytes:
     reader_idx, position = self._reader_idx_and_position(record_key)
-    self._ensure_reader_exists(reader_idx)
-    if hasattr(self._readers[reader_idx], "read"):
-      return self._readers[reader_idx].read([position])[0]
-    return self._readers[reader_idx][position]
+    reader = self._get_new_reader(reader_idx)
+    if hasattr(reader, "read"):
+      record = reader.read([position])[0]
+    else:
+      record = reader[position]
+    reader.close()
+    return record
 
   def __getitems__(
       self, record_keys: Sequence[SupportsIndex]
@@ -343,12 +339,13 @@ class ArrayRecordDataSource:
     ) -> Sequence[Tuple[Any, int]]:
       """Reads records using the given reader keeping track of the indices."""
       # Initialize readers lazily when we need to read from them.
-      self._ensure_reader_exists(reader_idx)
+      reader = self._get_new_reader(reader_idx)
       positions, indices = list(zip(*reader_positions_and_indices))
-      if hasattr(self._readers[reader_idx], "read"):
-        records = self._readers[reader_idx].read(positions)  # pytype: disable=attribute-error
+      if hasattr(reader, "read"):
+        records = reader.read(positions)  # pytype: disable=attribute-error
       else:
-        records = [self._readers[reader_idx][p] for p in positions]
+        records = [reader[p] for p in positions]
+      reader.close()
       return list(zip(records, indices))
 
     positions_and_indices = self._split_keys_per_reader(record_keys)
@@ -388,7 +385,7 @@ class ArrayRecordDataSource:
     self.__dict__.update(state)
     # We open readers lazily when we need to read from them. Thus, we don't
     # need to re-open the same files as before pickling.
-    self._readers = [None] * len(self._read_instructions)
+    # self._readers = [None] * len(self._read_instructions)
 
   def __repr__(self) -> str:
     """Storing a hash of paths since paths can be a very long list."""
